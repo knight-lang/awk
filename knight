@@ -1,3 +1,16 @@
 #!/bin/sh
 
-exec awk -f "${KNIGHT_PATH:-"$(dirname "$0")/knight.awk"}" -- "$@"
+if [ -z "$KNIGHT_PATH" ]; then
+	dir=$(dirname "$0" && printf x) || {
+		printf '%s: cannot find path to knight executable' "${0##*/}" >&2
+		exit 1
+	}
+	KNIGHT_PATH=${dir%?x}/knight.awk
+fi
+
+if [ ! -e "$KNIGHT_PATH" ]; then
+	printf '%s: cannot run knight; $KNIGHT_PATH (%s) does not exist' "${0##*/}" "$KNIGHT_PATH" >&2
+	exit 1
+fi
+
+exec awk -f "$KNIGHT_PATH" -- "$@"
