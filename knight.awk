@@ -136,7 +136,7 @@ function next_token(_token) {
 	else if (match($0, /^("[^"]*"|'[^']*')/)) _token = "s" substr($0, 2, RLENGTH - 2) # strip out the quotes
 	else if (match($0, /^@/)) _token = "a0" # empty array
 	else if (match($0, /^[TFN][_[:upper:]]*/)) _token = substr($0, 1, 1) # ignore everything but first char for funcs
-	else if (match($0, /^([_[:upper:]]+|[-`+*\/%^<>?&|!;=~,\[\]])/)) _token = "f" substr($0, 1, 1) # ignore everything but first char for funcs
+	else if (match($0, /^([_[:upper:]]+|[-$+*\/%^<>?&|!;=~,\[\]])/)) _token = "f" substr($0, 1, 1) # ignore everything but first char for funcs
 	else die("unknown token start '" substr($0, 1, 1) "'")
 
 	$0 = substr($0, RLENGTH + 1)
@@ -174,9 +174,37 @@ function eval_kn(source_code, _tmp) {
 	return run(_tmp)
 }
 
+function eql(lhs, rhs, _tmp) {
+	if (lhs == rhs) return 1
+	if (lhs !~ /^a/ || rhs !~ /^a/) return lhs == rhs
+	if (ARRAYS[lhs] != ARRAYS[rhs]) return 0
+	for (_tmp in lhs) if (!eql(lhs[_tmp], rhs[_tmp])) return 0
+	return 1
+}
+
+function lth(lhs, rhs) {
+	if (lhs ~ /^s/) return lhs < to_str(rhs)
+	if (lhs ~ /^n/) return substr(lhs, 2) < to_num(rhs)
+	if (lhs ~ /^[TF]/) return lhs == "F" && rhs == "T"
+	if (lhs ~ /^a/) {
+		die("todo")
+	}
+	bug("unknown argument to <:" lhs)
+}
+
+function gth(lhs, rhs) {
+	if (lhs ~ /^s/) return lhs > to_str(rhs)
+	if (lhs ~ /^n/) return substr(lhs, 2) > to_num(rhs)
+	if (lhs ~ /^[TF]/) return lhs == "T" && rhs == "F"
+	if (lhs ~ /^a/) {
+		die("todo")
+	}
+	bug("unknown argument to >:" lhs)
+}
+
 # print "{" value "}"
 # for (a in _args) print "[" a "]=" _args[a]
-function run(value, _args, _tmp, _tmp2) {
+function run(value, _args, _tmp, _tmp2, _tmp3) {
 	# If it's not something you execute, then return it.
 	if (substr(value, 0, 1) == "i")
 		return value in VARIABLES ? VARIABLES[value] : die("unknown variable: " value)
@@ -204,7 +232,7 @@ function run(value, _args, _tmp, _tmp2) {
 	if (_args[1] == "fC") return run(_args[2])
 	if (_args[1] == "fE") return eval_kn(to_str(_args[2]))
 	if (_args[1] == "f~") return "n" (-to_num(_args[2]))
-	if (_args[1] == "f`") {
+	if (_args[1] == "f$") {
 		_tmp = "s"
 		while (to_str(_args[2]) | getline) _tmp = _tmp $0 "\n" # accumulate the output.
 		return _tmp
@@ -230,21 +258,49 @@ function run(value, _args, _tmp, _tmp2) {
 		return _tmp
 	}
 	if (_args[1] == "f;") return _args[3]
-	if (_args[1] == "f+") die("todo")
-	if (_args[1] == "f-") die("todo")
-	if (_args[1] == "f*") die("todo")
-	# 	if (_args[2] ~ /^a/) {
-	# 		_tmp2 = to_num(_args[3])
-	# 		_tmp = new_ary(ARRAYS[_args[2]] * (_args[3] = to_num))
-	# 	}
-	# }die("todo")
-	if (_args[1] == "f/") die("todo")
-	if (_args[1] == "f%") die("todo")
-	if (_args[1] == "f^") die("todo")
-	if (_args[1] == "f?") die("todo")
-	if (_args[1] == "f<") die("todo")
-	if (_args[1] == "f>") die("todo")
-	if (_args[1] == "fG") die("todo")
+	if (_args[1] == "f+") {
+		if (_args[2] ~ /^n/) return "n" (substr(_args[2], 2) + to_num(_args[3]))
+		if (_args[2] ~ /^s/) return "s" (substr(_args[2], 2) to_str(_args[3]))
+		if (_args[2] ~ /^a/) {
+			to_ary(_args[3])
+			_tmp = new_ary(ARRAYS[_args[2]] + length(ARY))
+			for (_tmp2 = 1; _tmp2 <= ARRAYS[_args[2]]; ++_tmp2)
+				ARRAYS[_tmp, _tmp2] = ARRAYS[_args[2], _tmp2]
+			for (; _tmp2 <= ARRAYS[_tmp]; ++_tmp2)
+				ARRAYS[_tmp, _tmp2] = ARY[_tmp2 - ARRAYS[_args[2]]]
+			return _tmp
+		}
+		bug("unknown type to +:" _args[2])
+	}
+	if (_args[1] == "f-") return "n" (substr(_args[2], 2) - to_num(_args[3]))
+	if (_args[1] == "f*") {
+		if (_args[2] ~ /^n/) return "n" (substr(_args[2], 2) * to_num(_args[3]))
+		if (_args[2] ~ /^s/) {
+			_tmp = "s"
+			_tmp2 = to_num(_args[3])
+			while (_tmp2--) _tmp = _tmp substr(_args[2], 2)
+			return _tmp
+		}
+		if (_args[2] ~ /^a/) {
+			_tmp = new_ary(ARRAYS[_args[2]] * to_num(_args[3]))
+			for (_tmp2 = 1; _tmp2 <= ARRAYS[_tmp]; ++_tmp2)
+				ARRAYS[_tmp, _tmp2] = ARRAYS[_args[2], (_tmp2 - 1) % ARRAYS[_args[2]] + 1]
+			return _tmp
+		}
+		die("unknown type to *:" _args[2])
+	}
+	if (_args[1] == "f/") return "n" (substr(_args[2], 2) / to_num(_args[3]))
+	if (_args[1] == "f%") return "n" (substr(_args[2], 2) % to_num(_args[3]))
+	if (_args[1] == "f^") return "n" (substr(_args[2], 2) ^ to_num(_args[3]))
+	if (_args[1] == "f?") return eql(_args[2], _args[3]) ? "T" : "F"
+	if (_args[1] == "f<") return lth(_args[2], _args[3]) ? "T" : "F"
+	if (_args[1] == "f>") return gth(_args[2], _args[3]) ? "T" : "F"
+	if (_args[1] == "fG") {
+		if (_args[2] ~ /^s/) return "s" substr(to_str(_args[3]), to_num(_args[4]) + 1, to_num(_args[5]))
+		if (_args[2] !~ /^a/) bug("unknown type to G:" _args[2])
+		# _args[3] = to_num(_args[3]) + 1
+		# _tmp = new_ary(_tmp2 = to_num(_args[5]))
+	}
 	if (_args[1] == "fS") die("todo")
 
 	bug("unknown function to evaluate: '" _args[1] "'")
