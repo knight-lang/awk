@@ -221,7 +221,7 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f&") return to_bool(_tmp = run(_args[2])) ? run(_args[3]) : _tmp
 	if (_args[1] == "f|") return to_bool(_tmp = run(_args[2])) ? _tmp : run(_args[3])
 	if (_args[1] == "fW") { while (to_bool(_args[2])) run(_args[3]); return "N" }
-	if (_args[1] == "fI") return run(to_bool(_args[2]) ? _args[3] : _args[4])
+	if (_args[1] == "fI") return run(to_bool(run(_args[2])) ? _args[3] : _args[4])
 
 	for (_tmp in _args) _args[_tmp] = run(_args[_tmp])
 	# for (a in _args) print "[" a "]=" _args[a]
@@ -296,8 +296,9 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f<") return lth(_args[2], _args[3]) ? "T" : "F"
 	if (_args[1] == "f>") return gth(_args[2], _args[3]) ? "T" : "F"
 	if (_args[1] == "fG") {
-		if (_args[2] ~ /^s/) return "s" substr(to_str(_args[3]), to_num(_args[4]) + 1, to_num(_args[5]))
+		if (_args[2] ~ /^s/) return "s" substr(to_str(_args[2]), to_num(_args[3]) + 1, to_num(_args[4]))
 		if (_args[2] !~ /^a/) bug("unknown type to G:" _args[2])
+		die("todo: get")
 		# _args[3] = to_num(_args[3]) + 1
 		# _tmp = new_ary(_tmp2 = to_num(_args[5]))
 	}
