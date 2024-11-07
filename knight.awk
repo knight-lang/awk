@@ -11,7 +11,6 @@ function bug(msg) { die("bug: " msg) }
 # Parse command line parameters
 BEGIN {
 	FS="\x01" # Any non-valid field sep
-	FS="@" # Any non-valid field sep
 	if (ARGC != 3 || (ARGV[1] != "-e" && ARGV[1] != "-f")) {
 		# note there's no portable way to get script name, as `ARGV[0]` might be
 		# `/usr/bin/awk`...
@@ -82,12 +81,14 @@ function to_ary(value, _tmp, _sign) {
 		while (length(ARY) < ARRAYS[value])
 			ARY[length(ARY) + 1] = ARRAYS[value, length(ARY) + 1]
 	else if (value ~ /^s/) {
+		print "TODO: `split('')` is not valid"
 		split(substr(value, 2), ARY, "")
 		for (_tmp in ARY) ARY[_tmp] = "s" ARY[_tmp]
 	} else if (value ~ /^n/) {
 		value = int(substr(value, 2))
 		_sign = value < 0 ? -1 : 1
 		value *= _sign
+		print "TODO: `split('')` is not valid"
 		split(value, ARY, "")
 		for (_tmp in ARY) ARY[_tmp] = "n" (_sign * int(ARY[_tmp]))
 	} else
@@ -213,7 +214,12 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 
 	# Get the args and execute them
 	# This will run the first argument, `f<FN>`, but since that's not in ASTS, it's returned
-	split(ASTS[value], _args)
+	# split(ASTS[value], _args, /?/)
+	split("axbxc", _args, "x")
+	print "{" _args[1] "," _args[2] "}"
+	exit
+	print "<" length(ASTS[value]) ">"
+	print "<" ASTS[value] ";" _args[3] "," length(_args) ">"
 
 	## Functions that don't have all operands always executed
 	if (_args[1] == "fB") return _args[2]
