@@ -1,3 +1,7 @@
+# Knight in awk.
+# Note: UPPER_CASE variables are global, lower_case are parameters to
+# functions, and _underscore are local variables to functions.
+
 # Prints a message and then exits.
 function die(msg) { print msg; exit 1 }
 
@@ -6,6 +10,8 @@ function bug(msg) { die("bug: " msg) }
 
 # Parse command line parameters
 BEGIN {
+	FS="\x01" # Any non-valid field sep
+	FS="@" # Any non-valid field sep
 	if (ARGC != 3 || (ARGV[1] != "-e" && ARGV[1] != "-f")) {
 		# note there's no portable way to get script name, as `ARGV[0]` might be
 		# `/usr/bin/awk`...
@@ -13,148 +19,84 @@ BEGIN {
 	}
 
 	if (ARGV[1] == "-e") {
-		source_code = ARGV[2]
+		SOURCE_CODE = ARGV[2]
 		delete ARGV # just remove the entire argv.
-		exit 0 # Don't execute the `{ source_code = ... }` patterns.
+		exit 0 # Don't execute the `{ SOURCE_CODE = ... }` patterns.
 	} else
 		delete ARGV[1] # but retain ARGV[2], as we'll read from that.
 }
-
 # Collect source code.
-{ source_code = source_code "\n" $0 }
+{ SOURCE_CODE = SOURCE_CODE "\n" $0 }
 
 # Execute source code.
 END {
-	$0 = source_code
 	srand()
-
-	(ast_value = generate_ast()) || die("no program given")
-	run(ast_value)
+	ARRAYS["a0"] = 0
+	eval_kn(SOURCE_CODE)
 }
 
-
-# NOTE: awk starts indexing at 1
-
-# Fetch the next token from `$0`, updating `$0` in the process. Returns a falsey
-# value if the stream is empty, and `die`s if an invalid character is
-# encountered.
-function next_token() {
-	# Strip out all leading whitespace and comments
-	while (sub(/^([[:blank:]\n():]+|\#[^\n]*)/, "")) {
-		# do nothing
+# Values are stored as:
+# - `i...` the variable `...`
+# - `s...` the string `...`
+# - `n...` the number `...`
+# - `T` / `F` / `N` for those literals
+# - `aNUM`; `ARRAYS[value]` is the length, and `ARRAYS[value, N]` is the values
+# - `fC{FS<arg>}`; function, <arg>s are AST nodes.
+function to_str(value, _acc, _i) {
+	if (value ~ /^[sn]/) return substr(value, 2)
+	if (value == "T") return "true"
+	if (value == "F") return "false"
+	if (value == "N") return "null"
+	if (value ~ /^a/) {
+		_acc = ""
+		for (_i = 1; _i <= ARRAYS[value]; ++_i)
+			_acc = _acc (_i == 1 ? "" : "\n") to_str(ARRAYS[value, _i], 1)
+		return _acc
 	}
 
-	# If `$0`'s empty, then return.
-	if (!length())
-		return
-
-	if (match($0, /^[0-9]+/))
-		token = "n" substr($0, 1, RLENGTH)
-	else if (match($0, /^[a-z_][a-z0-9_]*/))
-		token = "i" substr($0, 1, RLENGTH)
-	else if (match($0, /^("[^"]*"|'[^']*')/))
-		token = "s" substr($0, 2, RLENGTH - 2) # strip out the quotes
-	else if (match($0, /^@/))
-		token = "a0" FS "0"
-	else if (match($0, /^([A-Z][A-Z_]*|[-`+*\/%^<>?&|!;=@~,\[\]])/))
-		token = "f" substr($0, 1, 1) # ignore everything but first char for funcs
-	else
-		die("unknown token start '" substr($0, 1, 1) "'")
-
-	$0 = substr($0, RLENGTH + 1)
-	return token
+	bug("bad input for 'to_str': '" value "'")
 }
 
-# Gets the arity of the token, ie how many arguments it takes.
-function arity(token) {
-	if (token ~ /^([^f]|f[TFNPR])/) return 0
-	if (token ~ /f[`OEBCQ!LD,\[\]~]/) return 1
-	if (token ~ /f[-+*\/%^?<>&|;=W]/) return 2
-	if (token == "fG" || token == "fI") return 3
-	if (token == "fS") return 4
-	bug("cant get arity for token '" token "'")
+function to_num(value) {
+	# Note we make sure `s<non-digit>` matches here.
+	if (match(value, /^[sn][[:blank:]]*[-+]?[0-9]*/))
+		return int(substr(value, 2, RLENGTH))
+	if (value ~ /^[FNT]$/) return value == "T"
+	if (value ~ /^a/) return ARRAYS[value]
+
+	bug("bad input for 'to_num': '" value "'")
 }
 
-# Generates an AST tree, storing values in the `ast` global variable. Returns
-# the index of the node that was just generated.
-# (The two parameters are simply local variables)
-function generate_ast(_node_idx, token, _i) {
-	# if there's nothing left, return
-	if (!(token = next_token()))
-		return
-
-	ast[_node_idx = next_node_idx += 1] = token
-
-	for(_i = 1; _i <= arity(token); ++_i) {
-		if (!(ast[_node_idx, _i] = generate_ast()))
-			die("missing argument " _i " for function '" substr(token, 2, 1) "'")
-	}
-
-	return _node_idx
+function to_bool(value) {
+	return value !~ /^(s|[na]0|[FN])$/
 }
 
-# converts `input` to a string, `run`ning the value first unless `dontrun` is
-# given.
-function to_str(input, dontrun) {
-	if (!dontrun) input = run(input)
+function to_ary(value, _tmp, _sign) {
+	delete ARY
 
-	if (input ~ /^[sn]/) return substr(input, 2)
-	if (input == "fT") return "true"
-	if (input == "fF") return "false"
-	if (input == "fN") return "null"
-	if (input ~ /^a/) die("todo: ary to str")
-
-	bug("bad input for 'to_str': '" input "'")
+	if (value ~ /^[FN]/) {
+		# do nothing, array is empty
+	} else if (value == "T")
+		ARY[1] = value
+	else if (value ~ /^a/)
+		while (length(ARY) < ARRAYS[value])
+			ARY[length(ARY) + 1] = ARRAYS[value, length(ARY) + 1]
+	else if (value ~ /^s/) {
+		split(substr(value, 2), ARY, "")
+		for (_tmp in ARY) ARY[_tmp] = "s" ARY[_tmp]
+	} else if (value ~ /^n/) {
+		value = int(substr(value, 2))
+		_sign = value < 0 ? -1 : 1
+		value *= _sign
+		split(value, ARY, "")
+		for (_tmp in ARY) ARY[_tmp] = "n" (_sign * int(ARY[_tmp]))
+	} else
+		bug("bad input for 'to_ary': '" value "'")
 }
 
-# converts `input` to a number, `run`ning the value first unless `dontrun` is
-# given.
-function to_num(input, dontrun) {
-	if (!dontrun) input = run(input)
-
-	if (match(input, /^[sn][[:blank:]]*[-+]?[0-9]*/))
-		return int(substr(input, 2, RLENGTH))
-	if (input == "fT") return 1
-	if (input == "fF" || input == "fN") return 0
-	if (input ~ /^a/) die("todo: ary to num")
-
-	bug("bad input for 'to_num': '" input "'")
-}
-
-# converts `input` to a boolean, `run`ning the value first unless `dontrun` is
-# given.
-function to_bool(input, dontrun, _ary) {
-	if (!dontrun) input = run(input)
-	if (input ~ /^a/) {
-		input = substr(input, 2)
-		split(input, _ary)
-		return int(_ary[2]) != 0
-	}
-
-	return input !~ /^(s|n0|f[FN])$/;
-}
-
-function newary(n, a1, a2, a3, _ret) {
-	_ret = "a" (ary_next_index += 1) FS n
-	if (n >= 1) arrays[ary_next_index, 1] = a1
-	if (n >= 2) arrays[ary_next_index, 2] = a2
-	if (n >= 3) arrays[ary_next_index, 3] = a3
-	if (n >= 4) arrays[ary_next_index, 4] = a4
-	return _ret
-}
-
-function to_ary(input) {
-	if (input ~ /^a/) return input
-	if (input == "fF" || input == "fN") return "a0" FS 0
-	if (input == "fT") return newary(1, input)
-	die("todo: " input)
-}
-
-function dump(value, _ary, _len) {
-	if (value ~ /^n/) printf "%d", substr(value, 2)
-	else if (value == "fT") printf "true"
-	else if (value == "fF") printf "false"
-	else if (value == "fN") printf "null"
+function dump(value, _i) {
+	if (value ~ /^(n|[TFN])/)
+		printf "%s", to_str(value)
 	else if (value ~ /^s/) {
 		value = substr(value, 2)
 		gsub(/\\/, "\\\\", value)
@@ -162,218 +104,148 @@ function dump(value, _ary, _len) {
 		gsub(/\r/, "\\r", value)
 		gsub(/\t/, "\\t", value)
 		gsub(/"/, "\\\"", value)
-		printf "%s", value
-	}
-	else if (value ~ /^a/) {
-		value = substr(value, 2)
-		split(value, _ary)
-		_len = int(_ary[2])
+		printf "\"%s\"", value
+	} else if (value ~ /^a/) {
 		printf "["
-		for (idx = 1 ; idx <= _len; idx+=1 ) {
-			if (idx != 1) printf ", "
-			dump(arrays[_ary[1], idx])
+		for (_i = 1; _i <= ARRAYS[value]; ++_i) {
+			if (_i != 1) printf ", "
+			dump(ARRAYS[value, _i])
 		}
 		printf "]"
-	}
-	else if (value ~ /^[0-9]+/) printf "AstNode(%s)", ast[value]
-	else bug("unknown value '" value "'")
+	} else
+		bug("unknown value to dump '" value "'")
 }
 
+function new_ary(len, _idx) {
+	ARRAYS[_idx = "a" length(ARRAYS)] = len
+	return _idx
+}
 
-# Runs the ast node for `node_idx`, returning the value that's computed.
-# Note that `args` is not a parameter, but simply a local variable.
-function run(node_idx, args, lhs, value) {
-	if (!(token = ast[node_idx]))
-		bug("token number '" node_idx "' doesn't exist in the ast")
-
-	# return the token itself for literals
-	if (token ~ /^([sna]|f[TFN])/) return token
-
-	# if it's an identifier, evaluate it.
-	if (substr(token, 1, 1) == "i") {
-		if (value = env[token]) return value
-
-		die("variable '" substr(token, 2) "' not found!")
+function next_token(_token) {
+	# Strip out all leading whitespace and comments
+	while (sub(/^[[:blank:]\n():]+|^\#[^\n]*\n?/, "")) {
+		# do nothing
 	}
 
-	# assign arguments
-	for(i = 1; i <= arity(token); ++i)
-		args[i] = ast[node_idx, i]
+	# If `$0`'s empty, then return.
+	if (!length()) return
 
-	# alias to make string comparisons slightly faster. 
-	fn = substr(token, 2)
+	# note the ordering of these is important, eg `i` comes before `n`, or `f` after `i`
+	if (match($0, /^[0-9]+/)) _token = "n" substr($0, 1, RLENGTH)
+	else if (match($0, /^[_[:lower:][:digit:]]+/)) _token = "i" substr($0, 1, RLENGTH)
+	else if (match($0, /^("[^"]*"|'[^']*')/)) _token = "s" substr($0, 2, RLENGTH - 2) # strip out the quotes
+	else if (match($0, /^@/)) _token = "a0" # empty array
+	else if (match($0, /^[TFN][_[:upper:]]*/)) _token = substr($0, 1, 1) # ignore everything but first char for funcs
+	else if (match($0, /^([_[:upper:]]+|[-`+*\/%^<>?&|!;=~,\[\]])/)) _token = "f" substr($0, 1, 1) # ignore everything but first char for funcs
+	else die("unknown token start '" substr($0, 1, 1) "'")
 
-	# Get a new input line, store it into tmp, and then return that value.
-	if (fn == "P") {
-		getline tmp
-		return "s" tmp
+	$0 = substr($0, RLENGTH + 1)
+	return _token
+}
+
+# Gets the arity of the token, ie how many arguments it takes.
+function arity(token) {
+	if (token ~ /^([^f]|f[PR])/) return 0
+	if (token ~ /^f[`OEBCQ!LD,A\[\]~]/) return 1
+	if (token ~ /^f[-+*\/%^?<>&|;=W]/) return 2
+	if (token ~ /^f[GI]/) return 3
+	if (token == "fS") return 4
+	bug("cant get arity for token '" token "'")
+}
+
+function generate_ast(_token, _arity, _tmp, _tmp2) {
+	# if there's nothing left, return
+	if ((_token = next_token()) == "") return
+	if (_token !~ /^f/) return _token
+
+	_arity = arity(_token)
+	for (_tmp = 1; _tmp <= _arity; ++_tmp) {
+		(_tmp2 = generate_ast()) || die("missing argument " _tmp " for function '" substr(_token, 2, 1) "'")
+		_token = _token FS _tmp2
 	}
+
+	ASTS[_tmp = length(ASTS) + 1] = _token
+	return _tmp
+}
+
+function eval_kn(source_code, _tmp) {
+	$0 = source_code
+	(_tmp = generate_ast()) || die("no program given")
+	return run(_tmp)
+}
+
+# print "{" value "}"
+# for (a in _args) print "[" a "]=" _args[a]
+function run(value, _args, _tmp, _tmp2) {
+	# If it's not something you execute, then return it.
+	if (substr(value, 0, 1) == "i")
+		return value in VARIABLES ? VARIABLES[value] : die("unknown variable: " value)
+	if (!(ASTS[value])) 
+		return value
+
+	# Get the args and execute them
+	# This will run the first argument, `f<FN>`, but since that's not in ASTS, it's returned
+	split(ASTS[value], _args)
+
+	## Functions that don't have all operands always executed
+	if (_args[1] == "fB") return _args[2]
+	if (_args[1] == "f=") return VARIABLES[_args[2]] = run(_args[3])
+	if (_args[1] == "f&") return to_bool(_tmp = run(_args[2])) ? run(_args[3]) : _tmp
+	if (_args[1] == "f|") return to_bool(_tmp = run(_args[2])) ? _tmp : run(_args[3])
+	if (_args[1] == "fW") { while (to_bool(_args[2])) run(_args[3]); return "N" }
+	if (_args[1] == "fI") return run(to_bool(_args[2]) ? _args[3] : _args[4])
+
+	for (_tmp in _args) _args[_tmp] = run(_args[_tmp])
+	# for (a in _args) print "[" a "]=" _args[a]
 
 	# Randomly pick an integer from 0 to 0xff_ff_ff_ff
-	if (fn == "R") return "n" int(rand() * 4294967295)
-
-	# When creating blocks, simply return the token number of the thing to eval.
-	if (fn == "B") return args[1]
-
-	# When calling a block, you need to execute the result of running `args[1]`.
-	if (fn == "C") return run(run(args[1]))
-
-	# Evaluates the first argument as Knight code, returning the result of the
-	# evaluation.
-	if (fn == "E") {
-		$0 = to_str(args[1])
-		return run(generate_ast())
+	if (_args[1] == "fR") return "n" int(rand() * 4294967295)
+	if (_args[1] == "fP") { getline _tmp; return "s" _tmp }
+	if (_args[1] == "fC") return run(_args[2])
+	if (_args[1] == "fE") return eval_kn(to_str(_args[2]))
+	if (_args[1] == "f~") return "n" (-to_num(_args[2]))
+	if (_args[1] == "f`") {
+		_tmp = "s"
+		while (to_str(_args[2]) | getline) _tmp = _tmp $0 "\n" # accumulate the output.
+		return _tmp
 	}
-
-	# Negates its argument
-	if (fn == "~") {
-		return "n" (-to_num(args[1]))
+	if (_args[1] == "f!") return to_bool(_args[2]) ? "F" : "T"
+	if (_args[1] == "fQ") exit to_num(_args[2])
+	if (_args[1] == "fL") { to_ary(_args[2]); return "n" length(ARY) }
+	if (_args[1] == "fD") { dump(_tmp = run(_args[2])); return _tmp }
+	if (_args[1] == "fO") {
+		if ((_tmp = to_str(_args[2])) ~ /\\$/) printf "%s", substr(_tmp, 1, length(_tmp) - 1)
+		else print _tmp
 	}
-
-	# The '`' keyword's used to execute shell commands and get the stdout.
-	if (fn == "`") {
-		result = ""
-
-		# accumulate the output.
-		while (to_str(args[1]) | getline) result = result $0 "\n"
-
-		return "s" result
+	if (_args[1] == "f,") { ARRAYS[_tmp = new_ary(1), 1] = _args[2]; return _tmp }
+	if (_args[1] == "fA")
+		return _args[2] ~ /^n/ ? "s" sprintf("%c", substr(_args[2], 1)) : \
+			die("Todo") # n" sprintf("%d", "'" substr(_args[2], 1))
+	if (_args[1] == "f[") { to_ary(_args[2]); return ARY[1] }
+	if (_args[1] == "f]") {
+		to_ary(_args[2])
+		_tmp = new_ary(length(ARY) - 1)
+		for (_tmp2 = 1; _tmp2 < ARRAYS[_tmp]; ++_tmp2)
+			ARRAYS[_tmp, _tmp2] = ARY[_tmp2 + 1]
+		return _tmp
 	}
+	if (_args[1] == "f;") return _args[3]
+	if (_args[1] == "f+") die("todo")
+	if (_args[1] == "f-") die("todo")
+	if (_args[1] == "f*") die("todo")
+	# 	if (_args[2] ~ /^a/) {
+	# 		_tmp2 = to_num(_args[3])
+	# 		_tmp = new_ary(ARRAYS[_args[2]] * (_args[3] = to_num))
+	# 	}
+	# }die("todo")
+	if (_args[1] == "f/") die("todo")
+	if (_args[1] == "f%") die("todo")
+	if (_args[1] == "f^") die("todo")
+	if (_args[1] == "f?") die("todo")
+	if (_args[1] == "f<") die("todo")
+	if (_args[1] == "f>") die("todo")
+	if (_args[1] == "fG") die("todo")
+	if (_args[1] == "fS") die("todo")
 
-	# Logical negation. All arguments are converted to booleans first.
-	if (fn == "!") return to_bool(args[1]) ? "fF" : "fT"
-
-	# Quit exits with the status code of its argument.
-	if (fn == "Q") exit to_num(args[1])
-
-	# Gets the length of the first argument, in chars.
-	if (fn == "L") {
-		value = run(args[1])
-		if (value ~ /^s/) return "n" length(value)
-		split(to_ary(value), value)
-		return "n" length(to_ary())
-	}
-
-	# Dumps a debug representation
-	if (fn == "D") {
-		dump(value = run(args[1]))
-		return value
-	}
-
-	# Output something to stdout. If the string ends in `\`, a newline won't be
-	# added. We return the evaluated argument.
-	if (fn == "O") {
-		str = to_str(args[1])
-
-		if (str ~ /\\$/) printf "%s", substr(str, 1, length(str) - 1)
-		else print str
-
-		return "fN"
-	}
-
-	if (fn == ",") return newary(1, run(args[1]))
-
-	# The `;` function simply evaluates the LHS then the RHS, returning the RHS.
-	if (fn == ";") {
-		run(args[1])
-		return run(args[2])
-	}
-
-	# The `=` operator assigns to the global scope then return the assigned val.
-	if (fn == "=") return env[ast[args[1]]] = run(args[2])
-
-	# The `+` operator: If the first operand's a string, we do concatenation.
-	# Otherwise, we do numerical addition.
-	if (fn == "+") {
-		lhs = run(args[1])
-
-		if (lhs ~ /^s/) return "s" to_str(lhs, 1) to_str(args[2])
-		else if (lhs ~ /^n/) return "n" (to_num(lhs, 1) + to_num(args[2]))
-		else {
-			# TODO: concat array
-		}
-	}
-
-	# The `*` operator: repeats its arguments if its a string, otherwise we do
-	# numeric multiplication
-	if (fn == "*") {
-		lhs = run(args[1])
-
-		# TODO: multiply array
-
-		if (lhs ~ /^n/) return "n" (to_num(lhs, 1) * to_num(args[2]))
-
-		lhs = to_str(lhs, 1)
-		amnt = to_num(args[2])
-		result = "s"
-
-		while (amnt--) result = result lhs
-
-		return result
-	}
-
-	# Simple math functions
-	if (fn == "-") return "n" (to_num(args[1]) -  to_num(args[2]))
-	if (fn == "/") return "n" (to_num(args[1]) /  to_num(args[2])) #/
-	if (fn == "%") return "n" (to_num(args[1]) %  to_num(args[2]))
-	if (fn == "^") return "n" (to_num(args[1]) ** to_num(args[2]))
-
-	# Short-circuiting logical operators.
-	if (fn ~ /[&|]/) {
-		lhs = run(args[1])
-
-		return (to_bool(lhs, 1) == (fn == "&")) ? run(args[2]) : lhs
-	}
-
-	# Checks for equality without coercion.
-	if (fn == "?") return run(args[1]) == run(args[2]) ? "fT" : "fF"
-
-	# Comparison operators. We don't have to do anything fancy for string/numebrs
-	# as awk already does that for us.
-	if (fn == "<") {
-		lhs = run(args[1])
-
-		if (lhs ~ /^s/) less = to_str(lhs, 1) < to_str(args[2])
-		else if (lhs ~ /^n/) less = to_num(lhs, 1) < to_num(args[2])
-		else less = to_bool(args[2]) && lhs == "fF"
-
-		return less ? "fT" : "fF"
-	}
-
-	if (fn == ">") {
-		lhs = run(args[1])
-
-		if (lhs ~ /^s/) more = to_str(lhs, 1) > to_str(args[2])
-		else if (lhs ~ /^n/) more = to_num(lhs, 1) > to_num(args[2])
-		else more = !to_bool(args[2]) && lhs == "fT"
-
-		return more ? "fT" : "fF"
-	}
-
-	# The while function executes the body until the condition is false. The
-	# return value is `null` if body never runs, otherwise it's the last returned
-	# value from the body.
-	if (fn == "W") {
-		while (to_bool(args[1])) run(args[2])
-		return "fN"
-	}
-
-	# Runs either the second or third argument, depending on the first argument.
-	if (fn == "I") return run(to_bool(args[1]) ? args[2] : args[3])
-
-	if (fn == "G")
-		return "s" substr(to_str(args[1]), to_num(args[2]) + 1, to_num(args[3]))
-
-	if (fn == "S") {
-		args[1] = to_str(args[1])
-		args[2] = to_num(args[2])
-		args[3] = to_num(args[3])
-		args[4] = to_str(args[4])
-
-		return "s" substr(args[1], 1, args[2]) \
-			args[4] substr(args[1], args[2] + args[3], length(args[1]))
-	}
-
-	bug("unknown function to evaluate '" fn "'")
+	bug("unknown function to evaluate: '" _args[1] "'")
 }
- 
