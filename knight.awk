@@ -58,7 +58,7 @@ function to_str(value, _acc, _i) {
 
 function to_num(value) {
 	# Note we make sure `s<non-digit>` matches here.
-	if (match(value, /^[sn][[:blank:]]*[-+]?[0-9]*/))
+	if (match(value, /^[sn][[:space:]]*[-+]?[0-9]*/))
 		return int(substr(value, 2, RLENGTH))
 	if (value ~ /^[FNT]$/) return value == "T"
 	if (value ~ /^a/) return ARRAYS[value]
@@ -81,16 +81,16 @@ function to_ary(value, _tmp, _sign) {
 		while (length(ARY) < ARRAYS[value])
 			ARY[length(ARY) + 1] = ARRAYS[value, length(ARY) + 1]
 	else if (value ~ /^s/) {
-		print "TODO: `split('')` is not valid"
-		split(substr(value, 2), ARY, "")
-		for (_tmp in ARY) ARY[_tmp] = "s" ARY[_tmp]
+		# Sadly, `split(x, y, "")` is not valid... otherwise this would be nice.
+		for (_tmp = 2; _tmp <= length(value); ++_tmp)
+			ARY[_tmp - 1] = "s" substr(value, _tmp, 1)
 	} else if (value ~ /^n/) {
 		value = int(substr(value, 2))
 		_sign = value < 0 ? -1 : 1
 		value *= _sign
-		print "TODO: `split('')` is not valid"
-		split(value, ARY, "")
-		for (_tmp in ARY) ARY[_tmp] = "n" (_sign * int(ARY[_tmp]))
+		# Sadly, `split(x, y, "")` is not valid... otherwise this would be nice.
+		for (_tmp = 1; _tmp <= length(value); ++_tmp)
+			ARY[_tmp] = "n" (_sign * substr(value, _tmp, 1))
 	} else
 		bug("bad input for 'to_ary': '" value "'")
 }
@@ -124,7 +124,7 @@ function new_ary(len, _idx) {
 
 function next_token(_token) {
 	# Strip out all leading whitespace and comments
-	while (sub(/^[[:blank:]\n():]+|^\#[^\n]*\n?/, "")) {
+	while (sub(/^[[:space:]\n():]+|^\#[^\n]*\n?/, "")) {
 		# do nothing
 	}
 
@@ -175,20 +175,24 @@ function eval_kn(source_code, _tmp) {
 	return run(_tmp)
 }
 
-function eql(lhs, rhs, _tmp) {
+function eql(lhs, rhs, _key) {
 	if (lhs == rhs) return 1
 	if (lhs !~ /^a/ || rhs !~ /^a/) return lhs == rhs
 	if (ARRAYS[lhs] != ARRAYS[rhs]) return 0
-	for (_tmp in lhs) if (!eql(lhs[_tmp], rhs[_tmp])) return 0
+	for (_key in lhs) if (!eql(lhs[_key], rhs[_key])) return 0
 	return 1
 }
 
-function lth(lhs, rhs) {
-	if (lhs ~ /^s/) return substr(lhs, 2) < to_str(rhs)
-	if (lhs ~ /^n/) return substr(lhs, 2) < to_num(rhs)
-	if (lhs ~ /^[TF]/) return lhs == "F" && rhs == "T"
+function cmp(lhs, rhs, _min, _i, _tmp) {
+	if (lhs ~ /^s/) return (lhs = substr(lhs, 2)) < (rhs = to_str(rhs)) ? -1 : lhs > rhs
+	if (lhs ~ /^n/) return (lhs = int(substr(lhs, 2))) < (rhs = to_num(rhs)) ? -1 : lhs > rhs
+	if (lhs ~ /^[TF]/) return cmp("n" (lhs == "T"), "n" to_bool(rhs))
 	if (lhs ~ /^a/) {
-		die("todo")
+		to_ary(rhs)
+		_min = ARRAYS[lhs] < length(ARY) ? ARRAYS[lhs] : length(ARY)
+		for (_i = 1; _i <= _min; _i++)
+			if (_tmp = cmp(ARRAYS[lhs, _i], ARY[_i])) return _tmp
+		return ARRAYS[lhs] < length(ARY) ? -1 : ARRAYS[lhs] > length(ARY)
 	}
 	bug("unknown argument to <:" lhs)
 }
@@ -213,13 +217,7 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 		return value
 
 	# Get the args and execute them
-	# This will run the first argument, `f<FN>`, but since that's not in ASTS, it's returned
-	# split(ASTS[value], _args, /?/)
-	split("axbxc", _args, "x")
-	print "{" _args[1] "," _args[2] "}"
-	exit
-	print "<" length(ASTS[value]) ">"
-	print "<" ASTS[value] ";" _args[3] "," length(_args) ">"
+	split(ASTS[value], _args, /\x01/) # Bug in my version of awk requires using the regexp
 
 	## Functions that don't have all operands always executed
 	if (_args[1] == "fB") return _args[2]
@@ -309,16 +307,21 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 		return _tmp
 	}
 	if (_args[1] == "f?") return eql(_args[2], _args[3]) ? "T" : "F"
-	if (_args[1] == "f<") return lth(_args[2], _args[3]) ? "T" : "F"
-	if (_args[1] == "f>") return gth(_args[2], _args[3]) ? "T" : "F"
+	if (_args[1] == "f<") return cmp(_args[2], _args[3]) < 0 ? "T" : "F"
+	if (_args[1] == "f>") return cmp(_args[2], _args[3]) > 0 ? "T" : "F"
 	if (_args[1] == "fG") {
 		if (_args[2] ~ /^s/) return "s" substr(to_str(_args[2]), to_num(_args[3]) + 1, to_num(_args[4]))
-		if (_args[2] !~ /^a/) bug("unknown type to G:" _args[2])
-		die("todo: get")
-		# _args[3] = to_num(_args[3]) + 1
-		# _tmp = new_ary(_tmp2 = to_num(_args[5]))
+		if (_args[2] ~ /^a/) {
+			_tmp2 = to_num(_args[3])
+			_tmp = new_ary(to_num(_args[4]))
+			for (_tmp3 = 1; _tmp3 <= ARRAYS[_tmp]; ++_tmp3)
+				ARRAYS[_tmp, _tmp3] = ARRAYS[_args[2], _tmp3 + _tmp2]
+			return _tmp
+		}
+		bug("unknown type to G:" _args[2])
 	}
-	if (_args[1] == "fS") die("todo")
+	if (_args[1] == "fS") {
+		die("todo")
 
 	bug("unknown function to evaluate: '" _args[1] "'")
 }
