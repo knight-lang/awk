@@ -1,11 +1,20 @@
-# Knight in awk.
-# Note: UPPER_CASE variables are global, lower_case are parameters to
-# functions, and _underscore are local variables to functions.
+# Knight in AWK.
+#
+# As AWK is not really intended for scripting, there's numerous changes I've
+# made to make things simpler/easier to read:
+#
+# (1) Variables
+# All variables are global, unless they're explicitly declared in a function's
+# parameter list; functions also can take any amount of arguments just fine. So
+# to help distinguish which variables are intended to be what, all globals
+# are in `UPPER_CASE`, all expected parameters are `lower_case`, and all local
+# variables (which are parameters, but aren't supposed to be passed in) are 
+# in `_lower_case` (ie with an `_` prefixed)
 
 # Prints a message and then exits.
 function die(msg) { print msg; exit 1 }
 
-# Used internally to indicate a bug has occured.
+# Used internally to indicate a bug has occurred.
 function bug(msg) { die("bug: " msg) }
 
 # Parse command line parameters
@@ -70,7 +79,7 @@ function to_bool(value) {
 	return value !~ /^(s|[na]0|[FN])$/
 }
 
-function to_ary(value, _tmp, _sign) {
+function to_ary(value, _i, _sign) {
 	delete ARY
 
 	if (value ~ /^[FN]/) {
@@ -80,17 +89,15 @@ function to_ary(value, _tmp, _sign) {
 	else if (value ~ /^a/)
 		while (length(ARY) < ARRAYS[value])
 			ARY[length(ARY) + 1] = ARRAYS[value, length(ARY) + 1]
-	else if (value ~ /^s/) {
-		# Sadly, `split(x, y, "")` is not valid... otherwise this would be nice.
-		for (_tmp = 2; _tmp <= length(value); ++_tmp)
-			ARY[_tmp - 1] = "s" substr(value, _tmp, 1)
-	} else if (value ~ /^n/) {
+	else if (value ~ /^s/)
+		for (_i = 2; _i <= length(value); ++_i)
+			ARY[_i - 1] = "s" substr(value, _i, 1)
+	else if (value ~ /^n/) {
 		value = int(substr(value, 2))
-		_sign = value < 0 ? -1 : 1
-		value *= _sign
+		value *= _sign = value < 0 ? -1 : 1
 		# Sadly, `split(x, y, "")` is not valid... otherwise this would be nice.
-		for (_tmp = 1; _tmp <= length(value); ++_tmp)
-			ARY[_tmp] = "n" (_sign * substr(value, _tmp, 1))
+		for (_i = 1; _i <= length(value); ++_i)
+			ARY[_i] = "n" (_sign * substr(value, _i, 1))
 	} else
 		bug("bad input for 'to_ary': '" value "'")
 }
@@ -154,15 +161,15 @@ function arity(token) {
 	bug("cant get arity for token '" token "'")
 }
 
-function generate_ast(_token, _arity, _tmp, _tmp2) {
+function generate_ast(_token, _arity, _i, _tmp) {
 	# if there's nothing left, return
 	if ((_token = next_token()) == "") return
 	if (_token !~ /^f/) return _token
 
 	_arity = arity(_token)
-	for (_tmp = 1; _tmp <= _arity; ++_tmp) {
-		(_tmp2 = generate_ast()) || die("missing argument " _tmp " for function '" substr(_token, 2, 1) "'")
-		_token = _token FS _tmp2
+	for (_i = 1; _i <= _arity; ++_i) {
+		(_tmp = generate_ast()) || die("missing argument " _i " for function '" substr(_token, 2, 1) "'")
+		_token = _token FS _tmp
 	}
 
 	ASTS[_tmp = length(ASTS) + 1] = _token
@@ -197,19 +204,9 @@ function cmp(lhs, rhs, _min, _i, _tmp) {
 	bug("unknown argument to <:" lhs)
 }
 
-function gth(lhs, rhs) {
-	if (lhs ~ /^s/) return substr(lhs, 2) > to_str(rhs)
-	if (lhs ~ /^n/) return substr(lhs, 2) > to_num(rhs)
-	if (lhs ~ /^[TF]/) return lhs == "T" && rhs == "F"
-	if (lhs ~ /^a/) {
-		die("todo")
-	}
-	bug("unknown argument to >:" lhs)
-}
-
 # print "{" value "}"
 # for (a in _args) print "[" a "]=" _args[a]
-function run(value, _args, _tmp, _tmp2, _tmp3) {
+function run(value, _args, _ret, _i, _tmp) {
 	# If it's not something you execute, then return it.
 	if (substr(value, 0, 1) == "i")
 		return value in VARIABLES ? VARIABLES[value] : die("unknown variable: " value)
@@ -237,30 +234,30 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "fE") return eval_kn(to_str(_args[2]))
 	if (_args[1] == "f~") return "n" (-to_num(_args[2]))
 	if (_args[1] == "f$") {
-		_tmp = "s"
-		while (to_str(_args[2]) | getline) _tmp = _tmp $0 "\n" # accumulate the output.
-		return _tmp
+		_ret = "s"
+		while (to_str(_args[2]) | getline) _ret = _ret $0 "\n" # accumulate the output.
+		return _ret
 	}
 	if (_args[1] == "f!") return to_bool(_args[2]) ? "F" : "T"
 	if (_args[1] == "fQ") exit to_num(_args[2])
 	if (_args[1] == "fL") { to_ary(_args[2]); return "n" length(ARY) }
-	if (_args[1] == "fD") { dump(_tmp = run(_args[2])); fflush() ; return _tmp }
+	if (_args[1] == "fD") { dump(_ret = run(_args[2])); fflush() ; return _ret }
 	if (_args[1] == "fO") {
 		if ((_tmp = to_str(_args[2])) ~ /\\$/) printf "%s", substr(_tmp, 1, length(_tmp) - 1)
 		else print _tmp
 		return "N"
 	}
-	if (_args[1] == "f,") { ARRAYS[_tmp = new_ary(1), 1] = _args[2]; return _tmp }
+	if (_args[1] == "f,") { ARRAYS[_ret = new_ary(1), 1] = _args[2]; return _ret }
 	if (_args[1] == "fA")
 		return _args[2] ~ /^n/ ? "s" sprintf("%c", substr(_args[2], 1)) : \
 			die("Todo") # n" sprintf("%d", "'" substr(_args[2], 1))
 	if (_args[1] == "f[") { to_ary(_args[2]); return ARY[1] }
 	if (_args[1] == "f]") {
 		to_ary(_args[2])
-		_tmp = new_ary(length(ARY) - 1)
-		for (_tmp2 = 1; _tmp2 <= ARRAYS[_tmp]; ++_tmp2)
-			ARRAYS[_tmp, _tmp2] = ARY[_tmp2 + 1]
-		return _tmp
+		_ret = new_ary(length(ARY) - 1)
+		for (_i = 1; _i <= ARRAYS[_ret]; ++_i)
+			ARRAYS[_ret, _i] = ARY[_i + 1]
+		return _ret
 	}
 	if (_args[1] == "f;") return _args[3]
 	if (_args[1] == "f+") {
@@ -268,12 +265,12 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 		if (_args[2] ~ /^s/) return "s" (substr(_args[2], 2) to_str(_args[3]))
 		if (_args[2] ~ /^a/) {
 			to_ary(_args[3])
-			_tmp = new_ary(ARRAYS[_args[2]] + length(ARY))
-			for (_tmp2 = 1; _tmp2 <= ARRAYS[_args[2]]; ++_tmp2)
-				ARRAYS[_tmp, _tmp2] = ARRAYS[_args[2], _tmp2]
-			for (; _tmp2 <= ARRAYS[_tmp]; ++_tmp2)
-				ARRAYS[_tmp, _tmp2] = ARY[_tmp2 - ARRAYS[_args[2]]]
-			return _tmp
+			_ret = new_ary(ARRAYS[_args[2]] + length(ARY))
+			for (_i = 1; _i <= ARRAYS[_args[2]]; ++_i)
+				ARRAYS[_ret, _i] = ARRAYS[_args[2], _i]
+			for (; _i <= ARRAYS[_ret]; ++_i)
+				ARRAYS[_ret, _i] = ARY[_i - ARRAYS[_args[2]]]
+			return _ret
 		}
 		bug("unknown type to +:" _args[2])
 	}
@@ -281,16 +278,16 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f*") {
 		if (_args[2] ~ /^n/) return "n" (substr(_args[2], 2) * to_num(_args[3]))
 		if (_args[2] ~ /^s/) {
-			_tmp = "s"
-			_tmp2 = to_num(_args[3])
-			while (_tmp2--) _tmp = _tmp substr(_args[2], 2)
-			return _tmp
+			_ret = "s"
+			_i = to_num(_args[3])
+			while (_i--) _ret = _ret substr(_args[2], 2)
+			return _ret
 		}
 		if (_args[2] ~ /^a/) {
-			_tmp = new_ary(ARRAYS[_args[2]] * to_num(_args[3]))
-			for (_tmp2 = 1; _tmp2 <= ARRAYS[_tmp]; ++_tmp2)
-				ARRAYS[_tmp, _tmp2] = ARRAYS[_args[2], (_tmp2 - 1) % ARRAYS[_args[2]] + 1]
-			return _tmp
+			_ret = new_ary(ARRAYS[_args[2]] * to_num(_args[3]))
+			for (_i = 1; _i <= ARRAYS[_ret]; ++_i)
+				ARRAYS[_ret, _i] = ARRAYS[_args[2], (_i - 1) % ARRAYS[_args[2]] + 1]
+			return _ret
 		}
 		die("unknown type to *:" _args[2])
 	}
@@ -298,13 +295,13 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f%") return "n" (substr(_args[2], 2) % to_num(_args[3]))
 	if (_args[1] == "f^") {
 		if (_args[2] ~ /^n/) return "n" (substr(_args[2], 2) ^ to_num(_args[3]))
-		_tmp = "s"
-		_tmp3 = to_str(_args[3])
-		for (_tmp2 = 1; _tmp2 <= ARRAYS[_args[2]]; ++_tmp2) {
-			if (_tmp2 != 1) _tmp = _tmp _tmp3
-			_tmp = _tmp to_str(ARRAYS[_args[2], _tmp2])
+		_ret = "s"
+		_tmp = to_str(_args[3]) # the separator
+		for (_i = 1; _i <= ARRAYS[_args[2]]; ++_i) {
+			if (_i != 1) _ret = _ret _tmp
+			_ret = _ret to_str(ARRAYS[_args[2], _i])
 		}
-		return _tmp
+		return _ret
 	}
 	if (_args[1] == "f?") return eql(_args[2], _args[3]) ? "T" : "F"
 	if (_args[1] == "f<") return cmp(_args[2], _args[3]) < 0 ? "T" : "F"
@@ -312,16 +309,32 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "fG") {
 		if (_args[2] ~ /^s/) return "s" substr(to_str(_args[2]), to_num(_args[3]) + 1, to_num(_args[4]))
 		if (_args[2] ~ /^a/) {
-			_tmp2 = to_num(_args[3])
-			_tmp = new_ary(to_num(_args[4]))
-			for (_tmp3 = 1; _tmp3 <= ARRAYS[_tmp]; ++_tmp3)
-				ARRAYS[_tmp, _tmp3] = ARRAYS[_args[2], _tmp3 + _tmp2]
-			return _tmp
+			_tmp = to_num(_args[3]) # the length
+			_ret = new_ary(to_num(_args[4]))
+			for (_i = 1; _i <= ARRAYS[_ret]; ++_i)
+				ARRAYS[_ret, _i] = ARRAYS[_args[2], _i + _tmp]
+			return _ret
 		}
 		bug("unknown type to G:" _args[2])
 	}
 	if (_args[1] == "fS") {
+		if (_args[2] ~ /^s/) {
+			_tmp = to_num(_args[3]) # start
+			return "s" (substr(_args[2], 2, _tmp) \
+			           to_num(_args[5]) \
+			           substr(_args[2], 2 + _tmp + to_num(_args[4])))
+		}
 		die("todo")
+		_args[1] = to_str(_args[1])
+		_args[2] = to_num(_args[2])
+		_args[3] = to_num(_args[3])
+		_args[4] = to_str(_args[4])
+
+		return "s" substr(_args[1], 1, _args[2]) \
+			_args[4] substr(_args[1], _args[2] + _args[3], length(_args[1]))
+
+		die("todo")
+	}
 
 	bug("unknown function to evaluate: '" _args[1] "'")
 }
