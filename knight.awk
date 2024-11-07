@@ -46,7 +46,7 @@ function to_str(value, _acc, _i) {
 	if (value ~ /^[sn]/) return substr(value, 2)
 	if (value == "T") return "true"
 	if (value == "F") return "false"
-	if (value == "N") return "null"
+	if (value == "N") return ""
 	if (value ~ /^a/) {
 		_acc = ""
 		for (_i = 1; _i <= ARRAYS[value]; ++_i)
@@ -95,8 +95,8 @@ function to_ary(value, _tmp, _sign) {
 }
 
 function dump(value, _i) {
-	if (value ~ /^(n|[TFN])/)
-		printf "%s", to_str(value)
+	if (value ~ /^(n|[TF])/) printf "%s", to_str(value)
+	else if (value == "N") printf "null"
 	else if (value ~ /^s/) {
 		value = substr(value, 2)
 		gsub(/\\/, "\\\\", value)
@@ -183,7 +183,7 @@ function eql(lhs, rhs, _tmp) {
 }
 
 function lth(lhs, rhs) {
-	if (lhs ~ /^s/) return lhs < to_str(rhs)
+	if (lhs ~ /^s/) return substr(lhs, 2) < to_str(rhs)
 	if (lhs ~ /^n/) return substr(lhs, 2) < to_num(rhs)
 	if (lhs ~ /^[TF]/) return lhs == "F" && rhs == "T"
 	if (lhs ~ /^a/) {
@@ -193,7 +193,7 @@ function lth(lhs, rhs) {
 }
 
 function gth(lhs, rhs) {
-	if (lhs ~ /^s/) return lhs > to_str(rhs)
+	if (lhs ~ /^s/) return substr(lhs, 2) > to_str(rhs)
 	if (lhs ~ /^n/) return substr(lhs, 2) > to_num(rhs)
 	if (lhs ~ /^[TF]/) return lhs == "T" && rhs == "F"
 	if (lhs ~ /^a/) {
@@ -220,7 +220,7 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f=") return VARIABLES[_args[2]] = run(_args[3])
 	if (_args[1] == "f&") return to_bool(_tmp = run(_args[2])) ? run(_args[3]) : _tmp
 	if (_args[1] == "f|") return to_bool(_tmp = run(_args[2])) ? _tmp : run(_args[3])
-	if (_args[1] == "fW") { while (to_bool(_args[2])) run(_args[3]); return "N" }
+	if (_args[1] == "fW") { while (to_bool(run(_args[2]))) run(_args[3]); return "N" }
 	if (_args[1] == "fI") return run(to_bool(run(_args[2])) ? _args[3] : _args[4])
 
 	for (_tmp in _args) _args[_tmp] = run(_args[_tmp])
@@ -240,10 +240,11 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f!") return to_bool(_args[2]) ? "F" : "T"
 	if (_args[1] == "fQ") exit to_num(_args[2])
 	if (_args[1] == "fL") { to_ary(_args[2]); return "n" length(ARY) }
-	if (_args[1] == "fD") { dump(_tmp = run(_args[2])); return _tmp }
+	if (_args[1] == "fD") { dump(_tmp = run(_args[2])); fflush() ; return _tmp }
 	if (_args[1] == "fO") {
 		if ((_tmp = to_str(_args[2])) ~ /\\$/) printf "%s", substr(_tmp, 1, length(_tmp) - 1)
 		else print _tmp
+		return "N"
 	}
 	if (_args[1] == "f,") { ARRAYS[_tmp = new_ary(1), 1] = _args[2]; return _tmp }
 	if (_args[1] == "fA")
@@ -253,7 +254,7 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 	if (_args[1] == "f]") {
 		to_ary(_args[2])
 		_tmp = new_ary(length(ARY) - 1)
-		for (_tmp2 = 1; _tmp2 < ARRAYS[_tmp]; ++_tmp2)
+		for (_tmp2 = 1; _tmp2 <= ARRAYS[_tmp]; ++_tmp2)
 			ARRAYS[_tmp, _tmp2] = ARY[_tmp2 + 1]
 		return _tmp
 	}
@@ -289,9 +290,18 @@ function run(value, _args, _tmp, _tmp2, _tmp3) {
 		}
 		die("unknown type to *:" _args[2])
 	}
-	if (_args[1] == "f/") return "n" (substr(_args[2], 2) / to_num(_args[3]))
+	if (_args[1] == "f/") return "n" int(substr(_args[2], 2) / to_num(_args[3]))
 	if (_args[1] == "f%") return "n" (substr(_args[2], 2) % to_num(_args[3]))
-	if (_args[1] == "f^") return "n" (substr(_args[2], 2) ^ to_num(_args[3]))
+	if (_args[1] == "f^") {
+		if (_args[2] ~ /^n/) return "n" (substr(_args[2], 2) ^ to_num(_args[3]))
+		_tmp = "s"
+		_tmp3 = to_str(_args[3])
+		for (_tmp2 = 1; _tmp2 <= ARRAYS[_args[2]]; ++_tmp2) {
+			if (_tmp2 != 1) _tmp = _tmp _tmp3
+			_tmp = _tmp to_str(ARRAYS[_args[2], _tmp2])
+		}
+		return _tmp
+	}
 	if (_args[1] == "f?") return eql(_args[2], _args[3]) ? "T" : "F"
 	if (_args[1] == "f<") return lth(_args[2], _args[3]) ? "T" : "F"
 	if (_args[1] == "f>") return gth(_args[2], _args[3]) ? "T" : "F"
