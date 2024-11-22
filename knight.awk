@@ -225,7 +225,6 @@ function run(value, _args, _ret, _i, _tmp) {
 	if (_args[1] == "fI") return run(to_bool(run(_args[2])) ? _args[3] : _args[4])
 
 	for (_tmp in _args) _args[_tmp] = run(_args[_tmp])
-	# for (a in _args) print "[" a "]=" _args[a]
 
 	# Randomly pick an integer from 0 to 0xff_ff_ff_ff
 	if (_args[1] == "fR") return "n" int(rand() * 4294967295)
