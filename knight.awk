@@ -40,6 +40,7 @@ BEGIN {
 END {
 	srand()
 	ARRAYS["a0"] = 0
+	for (n = 0; n < 256; n++) ORD[sprintf("%c", n)] = n # Lookup table for ASCII
 	eval_kn(SOURCE_CODE)
 }
 
@@ -251,11 +252,14 @@ function run(value, _args, _ret, _i, _tmp) {
 		return "N"
 	}
 	if (_args[1] == "f,") { ARRAYS[_ret = new_ary(1), 1] = _args[2]; return _ret }
-	if (_args[1] == "fA")
-		return _args[2] ~ /^n/ ? "s" sprintf("%c", substr(_args[2], 1)) : \
-			die("Todo") # n" sprintf("%d", "'" substr(_args[2], 1))
+	if (_args[1] == "fA") {
+		if (_args[2] ~ /^n/) return "s" sprintf("%c", int(substr(_args[2], 2)))
+		if (_args[2] ~ /^s/) return "n" ORD[substr(_args[2], 2, 1)]
+		die("unknown type to ASCII:" _args[2])
+	}
 	if (_args[1] == "f[") { to_ary(_args[2]); return ARY[1] }
 	if (_args[1] == "f]") {
+		if (_args[2] ~ /^s/) return "s" substr(_args[2], 3)
 		to_ary(_args[2])
 		_ret = new_ary(length(ARY) - 1)
 		for (_i = 1; _i <= ARRAYS[_ret]; ++_i)
@@ -275,7 +279,7 @@ function run(value, _args, _ret, _i, _tmp) {
 				ARRAYS[_ret, _i] = ARY[_i - ARRAYS[_args[2]]]
 			return _ret
 		}
-		bug("unknown type to +:" _args[2])
+		die("unknown type to +:" _args[2])
 	}
 	if (_args[1] == "f-") return "n" (substr(_args[2], 2) - to_num(_args[3]))
 	if (_args[1] == "f*") {
@@ -318,25 +322,27 @@ function run(value, _args, _ret, _i, _tmp) {
 				ARRAYS[_ret, _i] = ARRAYS[_args[2], _i + _tmp]
 			return _ret
 		}
-		bug("unknown type to G:" _args[2])
+		die("unknown type to G:" _args[2])
 	}
 	if (_args[1] == "fS") {
-		if (_args[2] ~ /^s/) {
-			_tmp = to_num(_args[3]) # start
-			return "s" (substr(_args[2], 2, _tmp) \
-			           to_num(_args[5]) \
-			           substr(_args[2], 2 + _tmp + to_num(_args[4])))
-		}
-		die("todo")
-		_args[1] = to_str(_args[1])
-		_args[2] = to_num(_args[2])
-		_args[3] = to_num(_args[3])
-		_args[4] = to_str(_args[4])
+		_args[3] = to_num(_args[3]) # _args[3] is start
+		_args[4] = to_num(_args[4]) # _args[4] is len
 
-		return "s" substr(_args[1], 1, _args[2]) \
-			_args[4] substr(_args[1], _args[2] + _args[3], length(_args[1]))
+		if (_args[2] ~ /^s/)
+			return "s" (substr(_args[2], 2, _args[3]) \
+			           to_str(_args[5]) \
+			           substr(_args[2], 2 + _args[3] + _args[4]))
+		if (_args[2] !~ /^a/) die("unknown type to S:" _args[2])
 
-		die("todo")
+		to_ary(_args[5]) # _args[5] is replacement
+		_ret = new_ary(ARRAYS[_args[2]] - _args[4] + length(ARY))
+		for (_i = 1; _i <= _args[3]; ++_i)
+			ARRAYS[_ret, _i] = ARRAYS[_args[2], _i]
+		for (_tmp = 1; _tmp <= length(ARY); ++_tmp)
+			ARRAYS[_ret, _i++] = ARY[_tmp]
+		for (_tmp = _args[3] + _args[4] + 1; _tmp <= ARRAYS[_args[2]]; ++_tmp)
+			ARRAYS[_ret, _i++] = ARRAYS[_args[2], _tmp]
+		return _ret
 	}
 
 	bug("unknown function to evaluate: '" _args[1] "'")
