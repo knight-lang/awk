@@ -229,8 +229,8 @@ function run(value, _args, _ret, _i, _tmp) {
 	# Randomly pick an integer from 0 to 0xff_ff_ff_ff
 	if (_args[1] == "fR") return "n" int(rand() * 4294967295)
 	if (_args[1] == "fP") {
-		getline _tmp; 
-		while (_tmp[-1] = "\r") _tmp=substr(_tmp, 1, length(_tmp))
+		if (! getline _tmp) return "N"
+		while (substr(_tmp, length(_tmp)) == "\r") _tmp=substr(_tmp, 1, length(_tmp) - 1)
 		return "s" _tmp
 	}
 	if (_args[1] == "fC") return run(_args[2])
