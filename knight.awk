@@ -26,15 +26,17 @@ BEGIN {
 		die("usage: knight.awk (-e 'expr' | -f file)")
 	}
 
-	if (ARGV[1] == "-e") {
+	if (ARGV[1] == "-e")
 		SOURCE_CODE = ARGV[2]
-		delete ARGV # just remove the entire argv.
-		exit 0 # Don't execute the `{ SOURCE_CODE = ... }` patterns.
-	} else
-		delete ARGV[1] # but retain ARGV[2], as we'll read from that.
+	else {
+		oldrs=RS;RS="\1" # Knight programs can't contain `\1`
+		getline SOURCE_CODE < ARGV[2]
+		RS=oldrs
+	}
+
+	delete ARGV
+	exit 0
 }
-# Collect source code.
-{ SOURCE_CODE = SOURCE_CODE "\n" $0 }
 
 # Execute source code.
 END {
